@@ -1,4 +1,5 @@
-import { mutation, query } from "./_generated/server";
+import { mutation, query, internalAction } from "./_generated/server";
+import { api, internal } from "./_generated/api";
 import { v } from "convex/values";
 
 export const sendMessage = mutation({
@@ -8,7 +9,17 @@ export const sendMessage = mutation({
   },
   handler: async (ctx, args) => {
     console.log("Received message:", args);
-    await ctx.db.insert("messages", { user: args.user, body: args.body });
+    await ctx.db.insert("messages", {
+      user: args.user,
+      body: args.body,
+    });
+
+    if (args.body.startsWith("/wiki ")) {
+      const topic = args.body.slice(args.body.indexOf(" ") + 1);
+      await ctx.scheduler.runAfter(0, internal.chat.getWikipeadiaSummary, { 
+        topic 
+      });
+    }
   },
 });
 
@@ -52,3 +63,24 @@ export const getMessagesAsArrayViaAsyncIterable = query({
     return out;
   },
 });
+
+export const getWikipeadiaSummary = internalAction({
+  args: { topic: v.string() },
+  handler: async (ctx, args) => {
+    const response = await fetch(
+      "https://en.wikipedia.org/w/api.php?format=json&action=query&prop=extracts&exintro&explaintext&redirects=1&titles=" +
+        args.topic
+    );
+
+    const summary = getSummaryFromJSON(await response.json());
+    await ctx.scheduler.runAfter(0, api.chat.sendMessage, {
+      user: "WikiBot",
+      body: summary,
+    })
+  },
+});
+
+function getSummaryFromJSON(data: any): string {
+  const firstPageId = Object.keys(data.query.pages)[0];
+  return data.query.pages[firstPageId].extract;
+}
